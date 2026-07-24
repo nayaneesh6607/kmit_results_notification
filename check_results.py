@@ -173,28 +173,33 @@ def send_email(exam_name: str, published_date: str):
     recipients = [r.strip() for r in GMAIL_RECIPIENTS.split(",") if r.strip()]
 
     msg = MIMEMultipart("alternative")
-    msg["From"] = f"KMIT Result Notifier <{GMAIL_ADDRESS}>"
+    msg["From"] = f"KMIT Results <{GMAIL_ADDRESS}>"
     msg["To"] = ", ".join(recipients)
-    msg["Subject"] = f"🎓 RESULTS OUT: {exam_name}"
+    msg["Subject"] = f"{exam_name} - Results Published"
 
     text_body = (
-        f"KMIT Results Released!\n\n"
-        f"Exam: {exam_name} Examination Results\n"
-        f"Published: {published_date}\n\n"
-        f"View Results: {RESULTS_URL}\n\n"
-        f"Go check your results!"
+        f"{exam_name} Examination Results have been published on {published_date}.\n\n"
+        f"Check your results here:\n"
+        f"{RESULTS_URL}\n\n"
+        f"— KMIT Exam Portal"
     )
 
     html_body = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-        <div style="background: linear-gradient(135deg, #ffa000, #14777f); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
-            <h1 style="margin: 0;">🎓 Results Released!</h1>
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 20px auto; color: #1a1a1a;">
+        <div style="background: #14777f; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+            <h2 style="margin: 0; color: #fff; font-size: 18px; font-weight: 600;">KMIT Exam Results</h2>
         </div>
-        <div style="background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-radius: 0 0 10px 10px;">
-            <h2 style="color: #333; margin-top: 0;">{exam_name}</h2>
-            <p style="color: #666;">📅 Published: <strong>{published_date}</strong></p>
-            <a href="{RESULTS_URL}" style="display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">View Results →</a>
-            <p style="color: #999; margin-top: 20px; font-size: 12px;">Sent by KMIT Result Notifier</p>
+        <div style="padding: 24px; background: #ffffff; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px;">
+            <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.5;">
+                <strong>{exam_name}</strong> Examination Results have been published on <strong>{published_date}</strong>.
+            </p>
+            <p style="margin: 0 0 20px; font-size: 15px;">
+                <a href="{RESULTS_URL}" style="color: #14777f; font-weight: 600;">Check your results here &rarr;</a>
+            </p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="margin: 0; font-size: 13px; color: #888;">
+                KMIT Exam Portal &middot; Keshav Memorial Institute of Technology
+            </p>
         </div>
     </div>
     """
