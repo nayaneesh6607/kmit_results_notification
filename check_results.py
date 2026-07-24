@@ -172,11 +172,6 @@ def send_email(exam_name: str, published_date: str):
 
     recipients = [r.strip() for r in GMAIL_RECIPIENTS.split(",") if r.strip()]
 
-    msg = MIMEMultipart("alternative")
-    msg["From"] = f"KMIT Results <{GMAIL_ADDRESS}>"
-    msg["To"] = ", ".join(recipients)
-    msg["Subject"] = f"{exam_name} - Results Published"
-
     text_body = (
         f"{exam_name} Examination Results have been published on {published_date}.\n\n"
         f"Check your results here:\n"
@@ -204,15 +199,19 @@ def send_email(exam_name: str, published_date: str):
     </div>
     """
 
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
-
     try:
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_ADDRESS, recipients, msg.as_string())
-        print(f"✅ Email sent to {', '.join(recipients)}!")
+            for recipient in recipients:
+                msg = MIMEMultipart("alternative")
+                msg["From"] = f"KMIT Results <{GMAIL_ADDRESS}>"
+                msg["To"] = recipient
+                msg["Subject"] = f"{exam_name} - Results Published"
+                msg.attach(MIMEText(text_body, "plain"))
+                msg.attach(MIMEText(html_body, "html"))
+                server.sendmail(GMAIL_ADDRESS, [recipient], msg.as_string())
+        print(f"✅ Emails sent individually to {len(recipients)} recipients!")
         return True
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
