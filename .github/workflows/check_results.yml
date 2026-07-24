@@ -1,0 +1,36 @@
+name: KMIT Result Checker
+
+on:
+  schedule:
+    # Runs every 5 minutes (GitHub Actions minimum practical interval)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  check-results:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check for results
+        id: check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python check_results.py
+
+      - name: Disable workflow if result found
+        if: steps.check.outputs.result_found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🎉 Result found! Disabling the cron workflow..."
+          gh workflow disable "KMIT Result Checker"
+          echo "Workflow disabled. No more checks will run."
