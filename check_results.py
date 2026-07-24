@@ -39,9 +39,9 @@ GMAIL_RECIPIENTS = os.environ.get("GMAIL_RECIPIENTS", "")  # comma-separated
 # Target regulation
 TARGET_REGULATION = "KR24"
 
-# Flexible patterns — matches any result with "2 Year" and "2 Sem"
-YEAR_PATTERN = re.compile(r'\b2\s*(year|yr)\b', re.IGNORECASE)
-SEM_PATTERN = re.compile(r'\b2\s*(sem|semester)\b', re.IGNORECASE)
+# Flexible patterns — matches any result with "2 Year" and "2 Sem" or "II Year II Sem" or "2-2"
+YEAR_PATTERN = re.compile(r'(\b2\s*(year|yr|nd)\b|\bii\s*(year|yr)\b|\b2-2\b)', re.IGNORECASE)
+SEM_PATTERN = re.compile(r'(\b2\s*(sem|semester|nd)\b|\bii\s*(sem|semester)\b|\b2-2\b)', re.IGNORECASE)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -56,8 +56,10 @@ class ResultsParser(HTMLParser):
         self.results = []
         self._current_row = None
         self._in_row = False
-        self._capture_text = False
-        self._current_text = ""
+        self._capture_date_text = False
+        self._capture_title_text = False
+        self._current_date_text = ""
+        self._current_title_text = ""
         self._current_exam_name = ""
         self._current_date = ""
 
@@ -73,31 +75,42 @@ class ResultsParser(HTMLParser):
             self._in_row = True
             self._current_exam_name = ""
             self._current_date = ""
+            self._current_title_text = ""
 
         # Capture exam name from hidden input
         if self._in_row and tag == "input":
             if attrs_dict.get("name") == "examname":
                 self._current_exam_name = attrs_dict.get("value", "")
 
+        # Capture text inside exam title elements as fallback
+        if self._in_row and (tag == "h4" or "exam-title" in attrs_dict.get("class", "")):
+            self._capture_title_text = True
+            self._current_title_text = ""
+
         # Capture date from badge span
         if self._in_row and tag == "span":
             classes = attrs_dict.get("class", "")
             if "date-badge" in classes:
-                self._capture_text = True
-                self._current_text = ""
+                self._capture_date_text = True
+                self._current_date_text = ""
 
     def handle_data(self, data):
-        if self._capture_text:
-            self._current_text += data
+        if self._capture_date_text:
+            self._current_date_text += data
+        if self._capture_title_text:
+            self._current_title_text += data
 
     def handle_endtag(self, tag):
-        if tag == "span" and self._capture_text:
-            self._capture_text = False
-            # Extract date (remove icon text)
-            self._current_date = re.sub(r'^[^\d]*', '', self._current_text).strip()
+        if tag == "span" and self._capture_date_text:
+            self._capture_date_text = False
+            self._current_date = re.sub(r'^[^\d]*', '', self._current_date_text).strip()
+
+        if (tag == "h4" or tag == "button") and self._capture_title_text:
+            self._capture_title_text = False
 
         if tag == "tr" and self._in_row and self._current_row:
-            self._current_row["name"] = self._current_exam_name
+            exam_name = self._current_exam_name or self._current_title_text.strip()
+            self._current_row["name"] = exam_name
             self._current_row["published_date"] = self._current_date
             self.results.append(self._current_row)
             self._current_row = None
@@ -110,6 +123,8 @@ class ResultsParser(HTMLParser):
 
 def matches_target(exam_name: str) -> bool:
     """Check if the exam name matches: any KR24 result with 2 Year + 2 Sem."""
+    if re.search(r'\b2-2\b', exam_name, re.IGNORECASE):
+        return True
     has_year = bool(YEAR_PATTERN.search(exam_name))
     has_sem = bool(SEM_PATTERN.search(exam_name))
     return has_year and has_sem
