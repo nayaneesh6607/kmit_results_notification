@@ -3,7 +3,7 @@
 KMIT Result Notifier (Cloud Version)
 =====================================
 Checks the KMIT exam results page for B.Tech 2 Year 2 Sem KR24 results
-and sends a Telegram notification when found.
+and sends notifications via Telegram + Gmail when found.
 
 Designed to run as a GitHub Actions cron job.
 """
@@ -12,6 +12,9 @@ import os
 import sys
 import re
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from urllib.request import urlopen, Request
 from urllib.parse import urlencode
 from urllib.error import URLError
@@ -27,6 +30,11 @@ RESULTS_URL = "https://portal.teleuniv.in/exam/resultshome"
 # Telegram config (from environment / GitHub Secrets)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# Gmail config (from environment / GitHub Secrets)
+GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+GMAIL_RECIPIENTS = os.environ.get("GMAIL_RECIPIENTS", "")  # comma-separated
 
 # Target regulation
 TARGET_REGULATION = "KR24"
@@ -156,6 +164,56 @@ def send_telegram(message: str):
         return False
 
 
+def send_email(exam_name: str, published_date: str):
+    """Send email notification via Gmail SMTP."""
+    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD or not GMAIL_RECIPIENTS:
+        print("⚠️  Gmail credentials not set. Skipping email.")
+        return False
+
+    recipients = [r.strip() for r in GMAIL_RECIPIENTS.split(",") if r.strip()]
+
+    msg = MIMEMultipart("alternative")
+    msg["From"] = f"KMIT Result Notifier <{GMAIL_ADDRESS}>"
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = f"🎓 RESULTS OUT: {exam_name}"
+
+    text_body = (
+        f"KMIT Results Released!\n\n"
+        f"Exam: {exam_name} Examination Results\n"
+        f"Published: {published_date}\n\n"
+        f"View Results: {RESULTS_URL}\n\n"
+        f"Go check your results!"
+    )
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #ffa000, #14777f); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
+            <h1 style="margin: 0;">🎓 Results Released!</h1>
+        </div>
+        <div style="background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-radius: 0 0 10px 10px;">
+            <h2 style="color: #333; margin-top: 0;">{exam_name}</h2>
+            <p style="color: #666;">📅 Published: <strong>{published_date}</strong></p>
+            <a href="{RESULTS_URL}" style="display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">View Results →</a>
+            <p style="color: #999; margin-top: 20px; font-size: 12px;">Sent by KMIT Result Notifier</p>
+        </div>
+    </div>
+    """
+
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_ADDRESS, recipients, msg.as_string())
+        print(f"✅ Email sent to {', '.join(recipients)}!")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to send email: {e}")
+        return False
+
+
 def check_results() -> bool:
     """
     Main check function.
@@ -188,14 +246,18 @@ def check_results() -> bool:
         print(f"\n🎉 FOUND {len(matching)} matching result(s)!")
 
         for r in matching:
-            message = (
+            # Send Telegram notification
+            tg_message = (
                 "🎓 <b>KMIT Results Released!</b>\n\n"
                 f"📋 <b>{r['name']} Examination Results</b>\n"
                 f"📅 Published: {r['published_date']}\n\n"
                 f"🔗 <a href='{RESULTS_URL}'>View Results</a>\n\n"
                 "Go check your results! 🚀"
             )
-            send_telegram(message)
+            send_telegram(tg_message)
+
+            # Send email notification
+            send_email(r['name'], r['published_date'])
 
         return True
     else:
