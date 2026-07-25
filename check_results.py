@@ -152,7 +152,81 @@ def parse_results(html: str) -> list:
     return parser.results
 
 
-def get_all_telegram_chats() -> list:
+WELCOMED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".welcomed_chats.json")
+
+
+def load_welcomed_chats() -> set:
+    """Load list of chat IDs that have already received a welcome message."""
+    if os.path.exists(WELCOMED_FILE):
+        try:
+            with open(WELCOMED_FILE, "r") as f:
+                return set(json.load(f))
+        except Exception as e:
+            print(f"⚠️ Could not load welcomed chats file: {e}")
+    return set()
+
+
+def save_welcomed_chats(chats: set):
+    """Save list of chat IDs that have received a welcome message."""
+    try:
+        with open(WELCOMED_FILE, "w") as f:
+            json.dump(list(chats), f)
+    except Exception as e:
+        print(f"⚠️ Could not save welcomed chats file: {e}")
+
+
+def handle_welcome_messages():
+    """Check for new users who messaged/started the Telegram bot and send a welcome response."""
+    if not TELEGRAM_BOT_TOKEN:
+        return
+
+    welcomed = load_welcomed_chats()
+    new_welcomed = set(welcomed)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    ctx = ssl._create_unverified_context()
+
+    try:
+        req = Request(url)
+        with urlopen(req, context=ctx, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if not data.get("ok"):
+                return
+
+            for update in data.get("result", []):
+                msg = update.get("message") or update.get("edited_message") or {}
+                chat = msg.get("chat", {})
+                cid = str(chat.get("id", ""))
+
+                if cid and cid not in new_welcomed:
+                    welcome_text = (
+                        "🎓 <b>Welcome to KMIT Result Notifier!</b>\n\n"
+                        "✅ You are now subscribed.\n"
+                        "You will automatically receive an instant push notification here as soon as "
+                        "<b>B.Tech 2 Year 2 Sem KR24 Examination Results</b> are published! 🚀\n\n"
+                        f"🔗 <a href='{RESULTS_URL}'>KMIT Exam Portal</a>"
+                    )
+                    send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    post_data = urlencode({
+                        "chat_id": cid,
+                        "text": welcome_text,
+                        "parse_mode": "HTML",
+                    }).encode("utf-8")
+
+                    try:
+                        w_req = Request(send_url, data=post_data, method="POST")
+                        with urlopen(w_req, context=ctx, timeout=15) as w_resp:
+                            w_res = json.loads(w_resp.read())
+                            if w_res.get("ok"):
+                                print(f"👋 Sent welcome message to new Telegram chat {cid}")
+                                new_welcomed.add(cid)
+                    except Exception as err:
+                        print(f"❌ Failed to send welcome message to {cid}: {err}")
+    except Exception as e:
+        print(f"⚠️ Error checking for new Telegram users: {e}")
+
+    if new_welcomed != welcomed:
+        save_welcomed_chats(new_welcomed)
     """Fetch all unique chat IDs that have interacted with the bot."""
     chat_ids = set()
     if TELEGRAM_CHAT_ID:
@@ -277,6 +351,9 @@ def check_results() -> bool:
     Main check function.
     Returns True if target result was found.
     """
+    # Check for new Telegram bot users and send welcome response
+    handle_welcome_messages()
+
     print("🔍 Checking KMIT results page...")
 
     try:
