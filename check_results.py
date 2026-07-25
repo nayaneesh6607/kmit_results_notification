@@ -183,8 +183,22 @@ def handle_welcome_messages():
     welcomed = load_welcomed_chats()
     new_welcomed = set(welcomed)
 
+    # Track last processed update to avoid replying to old messages
+    last_update_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_update_id")
+    last_update_id = 0
+    if os.path.exists(last_update_file):
+        try:
+            with open(last_update_file, "r") as f:
+                last_update_id = int(f.read().strip())
+        except Exception:
+            pass
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    if last_update_id > 0:
+        url += f"?offset={last_update_id + 1}"
+
     ctx = ssl._create_unverified_context()
+    max_update_id = last_update_id
 
     try:
         req = Request(url)
@@ -194,39 +208,71 @@ def handle_welcome_messages():
                 return
 
             for update in data.get("result", []):
+                uid = update.get("update_id", 0)
+                if uid > max_update_id:
+                    max_update_id = uid
+
                 msg = update.get("message") or update.get("edited_message") or {}
                 chat = msg.get("chat", {})
                 cid = str(chat.get("id", ""))
+                if not cid:
+                    continue
 
-                if cid and cid not in new_welcomed:
-                    welcome_text = (
+                send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+                if cid not in new_welcomed:
+                    # New user — send welcome
+                    reply_text = (
                         "🎓 <b>Welcome to KMIT Result Notifier!</b>\n\n"
                         "✅ You are now subscribed.\n"
                         "You will automatically receive an instant push notification here as soon as "
                         "<b>B.Tech 2 Year 2 Sem KR24 Examination Results</b> are published! 🚀\n\n"
                         f"🔗 <a href='{RESULTS_URL}'>KMIT Exam Portal</a>"
                     )
-                    send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-                    post_data = urlencode({
-                        "chat_id": cid,
-                        "text": welcome_text,
-                        "parse_mode": "HTML",
-                    }).encode("utf-8")
+                    new_welcomed.add(cid)
+                else:
+                    # Existing user — tell them they're subscribed
+                    reply_text = (
+                        "✅ You're already subscribed!\n\n"
+                        "You will be notified here instantly when "
+                        "<b>B.Tech 2 Year 2 Sem KR24 Examination Results</b> are published.\n\n"
+                        "No action needed — just keep this chat open! 🔔"
+                    )
 
-                    try:
-                        w_req = Request(send_url, data=post_data, method="POST")
-                        with urlopen(w_req, context=ctx, timeout=15) as w_resp:
-                            w_res = json.loads(w_resp.read())
-                            if w_res.get("ok"):
+                post_data = urlencode({
+                    "chat_id": cid,
+                    "text": reply_text,
+                    "parse_mode": "HTML",
+                }).encode("utf-8")
+
+                try:
+                    w_req = Request(send_url, data=post_data, method="POST")
+                    with urlopen(w_req, context=ctx, timeout=15) as w_resp:
+                        w_res = json.loads(w_resp.read())
+                        if w_res.get("ok"):
+                            if cid not in welcomed:
                                 print(f"👋 Sent welcome message to new Telegram chat {cid}")
-                                new_welcomed.add(cid)
-                    except Exception as err:
-                        print(f"❌ Failed to send welcome message to {cid}: {err}")
+                            else:
+                                print(f"💬 Replied 'already subscribed' to chat {cid}")
+                except Exception as err:
+                    print(f"❌ Failed to reply to {cid}: {err}")
+
     except Exception as e:
         print(f"⚠️ Error checking for new Telegram users: {e}")
 
+    # Save state
     if new_welcomed != welcomed:
         save_welcomed_chats(new_welcomed)
+
+    if max_update_id > last_update_id:
+        try:
+            with open(last_update_file, "w") as f:
+                f.write(str(max_update_id))
+        except Exception:
+            pass
+
+
+def get_all_telegram_chats() -> list:
     """Fetch all unique chat IDs that have interacted with the bot."""
     chat_ids = set()
     if TELEGRAM_CHAT_ID:
