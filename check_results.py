@@ -13,6 +13,7 @@ import sys
 import re
 import json
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from urllib.request import urlopen, Request
@@ -151,32 +152,70 @@ def parse_results(html: str) -> list:
     return parser.results
 
 
+def get_all_telegram_chats() -> list:
+    """Fetch all unique chat IDs that have interacted with the bot."""
+    chat_ids = set()
+    if TELEGRAM_CHAT_ID:
+        for cid in TELEGRAM_CHAT_ID.split(","):
+            if cid.strip():
+                chat_ids.add(cid.strip())
+
+    if not TELEGRAM_BOT_TOKEN:
+        return list(chat_ids)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    try:
+        ctx = ssl._create_unverified_context()
+        req = Request(url)
+        with urlopen(req, context=ctx, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                for update in data.get("result", []):
+                    msg = update.get("message") or update.get("edited_message") or {}
+                    chat = msg.get("chat", {})
+                    if "id" in chat:
+                        chat_ids.add(str(chat["id"]))
+    except Exception as e:
+        print(f"⚠️  Could not fetch Telegram getUpdates: {e}")
+
+    return list(chat_ids)
+
+
 def send_telegram(message: str):
-    """Send a message via Telegram Bot API."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️  Telegram credentials not set. Skipping notification.")
+    """Send a message via Telegram Bot API to all active bot chats."""
+    if not TELEGRAM_BOT_TOKEN:
+        print("⚠️  Telegram bot token not set. Skipping notification.")
+        return False
+
+    chat_ids = get_all_telegram_chats()
+    if not chat_ids:
+        print("⚠️  No Telegram chat IDs found. Skipping notification.")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = urlencode({
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-    }).encode("utf-8")
+    ctx = ssl._create_unverified_context()
+    success_count = 0
 
-    try:
-        req = Request(url, data=data, method="POST")
-        with urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read())
-            if result.get("ok"):
-                print("✅ Telegram notification sent!")
-                return True
-            else:
-                print(f"❌ Telegram API error: {result}")
-                return False
-    except Exception as e:
-        print(f"❌ Failed to send Telegram message: {e}")
-        return False
+    for cid in chat_ids:
+        data = urlencode({
+            "chat_id": cid,
+            "text": message,
+            "parse_mode": "HTML",
+        }).encode("utf-8")
+
+        try:
+            req = Request(url, data=data, method="POST")
+            with urlopen(req, context=ctx, timeout=15) as resp:
+                result = json.loads(resp.read())
+                if result.get("ok"):
+                    print(f"✅ Telegram notification sent to chat {cid}!")
+                    success_count += 1
+                else:
+                    print(f"❌ Telegram API error for {cid}: {result}")
+        except Exception as e:
+            print(f"❌ Failed to send Telegram message to {cid}: {e}")
+
+    return success_count > 0
 
 
 def send_email(exam_name: str, published_date: str):
