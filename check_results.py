@@ -14,7 +14,7 @@ import re
 import json
 import smtplib
 import ssl
-import html
+import html as html_lib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from urllib.request import urlopen, Request
@@ -24,7 +24,7 @@ from html.parser import HTMLParser
 
 
 def get_ssl_context() -> ssl.SSLContext:
-    """Return strict verified SSL context, falling back to unverified only if CA bundle missing."""
+    """Return strict verified SSL context, falling back to unverified only if CA bundle is missing."""
     try:
         return ssl.create_default_context()
     except Exception:
@@ -49,9 +49,9 @@ GMAIL_RECIPIENTS = os.environ.get("GMAIL_RECIPIENTS", "")  # comma-separated
 # Target regulation
 TARGET_REGULATION = "KR24"
 
-# Flexible patterns — matches any result with "2 Year" and "2 Sem" or "II Year II Sem" or "2-2"
-YEAR_PATTERN = re.compile(r'(\b2\s*(year|yr|nd)\b|\bii\s*(year|yr)\b|\b2-2\b)', re.IGNORECASE)
-SEM_PATTERN = re.compile(r'(\b2\s*(sem|semester|nd)\b|\bii\s*(sem|semester)\b|\b2-2\b)', re.IGNORECASE)
+# Precise patterns — matches any result with "2 Year" and "2 Sem" or "II Year II Sem" or "2-2"
+YEAR_PATTERN = re.compile(r'\b(2|2nd|ii)\s*(year|yr)\b', re.IGNORECASE)
+SEM_PATTERN = re.compile(r'\b(2|2nd|ii)\s*(sem|semester)\b', re.IGNORECASE)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -150,18 +150,20 @@ def fetch_page() -> str:
         ),
     }
     req = Request(RESULTS_URL, headers=headers)
-    with urlopen(req, timeout=30) as resp:
+    ctx = get_ssl_context()
+    with urlopen(req, context=ctx, timeout=30) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def parse_results(html: str) -> list:
+def parse_results(page_html: str) -> list:
     """Parse HTML and return list of result dicts."""
     parser = ResultsParser()
-    parser.feed(html)
+    parser.feed(page_html)
     return parser.results
 
 
 WELCOMED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".welcomed_chats.json")
+LAST_UPDATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_update_id")
 
 
 def load_welcomed_chats() -> set:
@@ -185,19 +187,17 @@ def save_welcomed_chats(chats: set):
 
 
 def handle_welcome_messages():
-    """Check for new users who messaged/started the Telegram bot and send a welcome response."""
+    """Check for new users who messaged/started the Telegram bot and send a welcome response using update offset."""
     if not TELEGRAM_BOT_TOKEN:
         return
 
     welcomed = load_welcomed_chats()
     new_welcomed = set(welcomed)
 
-    # Track last processed update to avoid replying to old messages
-    last_update_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_update_id")
     last_update_id = 0
-    if os.path.exists(last_update_file):
+    if os.path.exists(LAST_UPDATE_FILE):
         try:
-            with open(last_update_file, "r") as f:
+            with open(LAST_UPDATE_FILE, "r") as f:
                 last_update_id = int(f.read().strip())
         except Exception:
             pass
@@ -230,7 +230,6 @@ def handle_welcome_messages():
                 send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
                 if cid not in new_welcomed:
-                    # New user — send welcome
                     reply_text = (
                         "🎓 <b>Welcome to KMIT Result Notifier!</b>\n\n"
                         "✅ You are now subscribed.\n"
@@ -240,7 +239,6 @@ def handle_welcome_messages():
                     )
                     new_welcomed.add(cid)
                 else:
-                    # Existing user — tell them they're subscribed
                     reply_text = (
                         "✅ You're already subscribed!\n\n"
                         "You will be notified here instantly when "
@@ -275,38 +273,19 @@ def handle_welcome_messages():
 
     if max_update_id > last_update_id:
         try:
-            with open(last_update_file, "w") as f:
+            with open(LAST_UPDATE_FILE, "w") as f:
                 f.write(str(max_update_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Could not save last update ID: {e}")
 
 
 def get_all_telegram_chats() -> list:
-    """Fetch all unique chat IDs that have interacted with the bot."""
-    chat_ids = set()
+    """Fetch all unique chat IDs from persisted state and environment variables."""
+    chat_ids = load_welcomed_chats()
     if TELEGRAM_CHAT_ID:
         for cid in TELEGRAM_CHAT_ID.split(","):
             if cid.strip():
                 chat_ids.add(cid.strip())
-
-    if not TELEGRAM_BOT_TOKEN:
-        return list(chat_ids)
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-    try:
-        ctx = get_ssl_context()
-        req = Request(url)
-        with urlopen(req, context=ctx, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data.get("ok"):
-                for update in data.get("result", []):
-                    msg = update.get("message") or update.get("edited_message") or {}
-                    chat = msg.get("chat", {})
-                    if "id" in chat:
-                        chat_ids.add(str(chat["id"]))
-    except Exception as e:
-        print(f"⚠️  Could not fetch Telegram getUpdates: {e}")
-
     return list(chat_ids)
 
 
@@ -335,7 +314,7 @@ def send_telegram(message: str):
         try:
             req = Request(url, data=data, method="POST")
             with urlopen(req, context=ctx, timeout=15) as resp:
-                result = json.loads(resp.read())
+                result = json.loads(resp.read().decode("utf-8"))
                 if result.get("ok"):
                     print(f"✅ Telegram notification sent to chat {cid}!")
                     success_count += 1
@@ -348,12 +327,15 @@ def send_telegram(message: str):
 
 
 def send_email(exam_name: str, published_date: str):
-    """Send email notification via Gmail SMTP."""
+    """Send email notification via Gmail SMTP with per-recipient exception handling."""
     if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD or not GMAIL_RECIPIENTS:
         print("⚠️  Gmail credentials not set. Skipping email.")
         return False
 
     recipients = [r.strip() for r in GMAIL_RECIPIENTS.split(",") if r.strip()]
+
+    safe_exam_name = html_lib.escape(exam_name)
+    safe_published_date = html_lib.escape(published_date)
 
     text_body = (
         f"{exam_name} Examination Results have been published on {published_date}.\n\n"
@@ -369,7 +351,7 @@ def send_email(exam_name: str, published_date: str):
         </div>
         <div style="padding: 24px; background: #ffffff; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px;">
             <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.5;">
-                <strong>{exam_name}</strong> Examination Results have been published on <strong>{published_date}</strong>.
+                <strong>{safe_exam_name}</strong> Examination Results have been published on <strong>{safe_published_date}</strong>.
             </p>
             <p style="margin: 0 0 20px; font-size: 15px;">
                 <a href="{RESULTS_URL}" style="color: #14777f; font-weight: 600;">Check your results here &rarr;</a>
@@ -382,23 +364,30 @@ def send_email(exam_name: str, published_date: str):
     </div>
     """
 
+    success_count = 0
     try:
+        ctx = get_ssl_context()
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
+            server.starttls(context=ctx)
             server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             for recipient in recipients:
-                msg = MIMEMultipart("alternative")
-                msg["From"] = f"KMIT Results <{GMAIL_ADDRESS}>"
-                msg["To"] = recipient
-                msg["Subject"] = f"{exam_name} - Results Published"
-                msg.attach(MIMEText(text_body, "plain"))
-                msg.attach(MIMEText(html_body, "html"))
-                server.sendmail(GMAIL_ADDRESS, [recipient], msg.as_string())
-        print(f"✅ Emails sent individually to {len(recipients)} recipients!")
-        return True
+                try:
+                    msg = MIMEMultipart("alternative")
+                    msg["From"] = f"KMIT Results <{GMAIL_ADDRESS}>"
+                    msg["To"] = recipient
+                    msg["Subject"] = f"{exam_name} - Results Published"
+                    msg.attach(MIMEText(text_body, "plain"))
+                    msg.attach(MIMEText(html_body, "html"))
+                    server.sendmail(GMAIL_ADDRESS, [recipient], msg.as_string())
+                    print(f"✅ Email sent to {recipient}")
+                    success_count += 1
+                except Exception as send_err:
+                    print(f"❌ Failed to send email to {recipient}: {send_err}")
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        print(f"❌ SMTP connection failure: {e}")
         return False
+
+    return success_count > 0
 
 
 def check_results() -> bool:
@@ -412,12 +401,12 @@ def check_results() -> bool:
     print("🔍 Checking KMIT results page...")
 
     try:
-        html = fetch_page()
+        page_html = fetch_page()
     except Exception as e:
         print(f"❌ Failed to fetch page: {e}")
         return False
 
-    all_results = parse_results(html)
+    all_results = parse_results(page_html)
     kr24_results = [r for r in all_results if r["regulation"] == TARGET_REGULATION]
 
     print(f"   Found {len(all_results)} total results, {len(kr24_results)} KR24 results")
@@ -436,8 +425,8 @@ def check_results() -> bool:
         print(f"\n🎉 FOUND {len(matching)} matching result(s)!")
 
         for r in matching:
-            safe_name = html.escape(r['name'])
-            safe_date = html.escape(r['published_date'])
+            safe_name = html_lib.escape(r['name'])
+            safe_date = html_lib.escape(r['published_date'])
             # Send Telegram notification
             tg_message = (
                 "🎓 <b>KMIT Results Released!</b>\n\n"
