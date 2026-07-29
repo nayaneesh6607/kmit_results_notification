@@ -24,11 +24,8 @@ from html.parser import HTMLParser
 
 
 def get_ssl_context() -> ssl.SSLContext:
-    """Return strict verified SSL context, falling back to unverified only if CA bundle is missing."""
-    try:
-        return ssl.create_default_context()
-    except Exception:
-        return ssl._create_unverified_context()
+    """Return strict verified SSL context. Raises exception if certificates are missing."""
+    return ssl.create_default_context()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -95,6 +92,7 @@ class ResultsParser(HTMLParser):
         # Capture text inside exam title elements as fallback
         if self._in_row and (tag == "h4" or "exam-title" in attrs_dict.get("class", "")):
             self._capture_title_text = True
+            self._title_tag = tag
             self._current_title_text = ""
 
         # Capture date from badge span
@@ -113,10 +111,13 @@ class ResultsParser(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "span" and self._capture_date_text:
             self._capture_date_text = False
-            self._current_date = re.sub(r'^[^\d]*', '', self._current_date_text).strip()
+            raw_date = re.sub(r'^[^\d]*', '', self._current_date_text).strip()
+            if re.search(r'\d', raw_date):
+                self._current_date = raw_date
 
-        if (tag == "h4" or tag == "button") and self._capture_title_text:
+        if tag == getattr(self, "_title_tag", None) and self._capture_title_text:
             self._capture_title_text = False
+            self._title_tag = None
 
         if tag == "tr" and self._in_row and self._current_row:
             exam_name = self._current_exam_name or self._current_title_text.strip()
@@ -230,12 +231,16 @@ def handle_welcome_messages():
                 send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
                 if cid not in new_welcomed:
+                    whitelist = [c.strip() for c in TELEGRAM_CHAT_ID.split(",") if c.strip()]
+                    if whitelist and cid not in whitelist:
+                        print(f"🚫 Unauthorized chat {cid} tried to subscribe. Ignored.")
+                        continue
                     reply_text = (
                         "🎓 <b>Welcome to KMIT Result Notifier!</b>\n\n"
                         "✅ You are now subscribed.\n"
                         "You will automatically receive an instant push notification here as soon as "
                         "<b>B.Tech 2 Year 2 Sem KR24 Examination Results</b> are published! 🚀\n\n"
-                        f"🔗 <a href='{RESULTS_URL}'>KMIT Exam Portal</a>"
+                        f"🔗 <a href='{html_lib.escape(RESULTS_URL)}'>KMIT Exam Portal</a>"
                     )
                     new_welcomed.add(cid)
                 else:
@@ -460,6 +465,8 @@ if __name__ == "__main__":
         if flag_file:
             with open(flag_file, "a") as f:
                 f.write("result_found=true\n")
+        else:
+            print("📝 (Local Run) Would have disabled GitHub Actions workflow.")
     else:
         print("\n⏳ Not yet. Will check again next cycle.")
 
