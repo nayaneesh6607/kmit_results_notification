@@ -14,12 +14,21 @@ import re
 import json
 import smtplib
 import ssl
+import html
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from urllib.request import urlopen, Request
 from urllib.parse import urlencode
 from urllib.error import URLError
 from html.parser import HTMLParser
+
+
+def get_ssl_context() -> ssl.SSLContext:
+    """Return strict verified SSL context, falling back to unverified only if CA bundle missing."""
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -197,7 +206,7 @@ def handle_welcome_messages():
     if last_update_id > 0:
         url += f"?offset={last_update_id + 1}"
 
-    ctx = ssl._create_unverified_context()
+    ctx = get_ssl_context()
     max_update_id = last_update_id
 
     try:
@@ -285,7 +294,7 @@ def get_all_telegram_chats() -> list:
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     try:
-        ctx = ssl._create_unverified_context()
+        ctx = get_ssl_context()
         req = Request(url)
         with urlopen(req, context=ctx, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -313,7 +322,7 @@ def send_telegram(message: str):
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    ctx = ssl._create_unverified_context()
+    ctx = get_ssl_context()
     success_count = 0
 
     for cid in chat_ids:
@@ -427,11 +436,13 @@ def check_results() -> bool:
         print(f"\n🎉 FOUND {len(matching)} matching result(s)!")
 
         for r in matching:
+            safe_name = html.escape(r['name'])
+            safe_date = html.escape(r['published_date'])
             # Send Telegram notification
             tg_message = (
                 "🎓 <b>KMIT Results Released!</b>\n\n"
-                f"📋 <b>{r['name']} Examination Results</b>\n"
-                f"📅 Published: {r['published_date']}\n\n"
+                f"📋 <b>{safe_name} Examination Results</b>\n"
+                f"📅 Published: {safe_date}\n\n"
                 f"🔗 <a href='{RESULTS_URL}'>View Results</a>\n\n"
                 "Go check your results! 🚀"
             )

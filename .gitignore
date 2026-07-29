@@ -1,0 +1,19 @@
+# Environment & Credentials
+.env
+*.env
+*.pem
+*.key
+*.token
+*.secret
+
+# Python & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Logs & Temporary files
+*.log
+tmp/
+scratch/
+.DS_Store
