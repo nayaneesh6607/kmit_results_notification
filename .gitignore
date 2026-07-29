@@ -17,3 +17,7 @@ __pycache__/
 tmp/
 scratch/
 .DS_Store
+
+# State files
+.welcomed_chats.json
+.last_update_id
