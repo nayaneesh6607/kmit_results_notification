@@ -1,10 +1,10 @@
 name: KMIT Result Checker
 
 on:
-  schedule:
+  # schedule:
     # Runs every 3 minutes
-    - cron: '*/3 * * * *'
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
+    # - cron: '*/3 * * * *'
+  # workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
   check-results:
